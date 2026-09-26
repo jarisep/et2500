@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Register ET2500 external watchdog (does not arm it)
+After=systemd-modules-load.service
+Before=autofan.service
+ConditionPathExists=/usr/local/libexec/cn102-register-watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/cn102-register-watchdog
+RemainAfterExit=yes
+TimeoutStartSec=25
+# No stop action: never unload an active watchdog as a service-stop side effect.
+
+[Install]
+WantedBy=multi-user.target

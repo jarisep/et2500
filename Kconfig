@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config ET2500_CPLD_WATCHDOG
+	tristate "Asterfusion ET2500 external CPLD watchdog"
+	depends on I2C && GPIOLIB
+	select REGMAP_I2C
+	select WATCHDOG_CORE
+	help
+	  External ET2500 board watchdog with CPLD enable control over I2C
+	  and bounded feed pulses over a non-sleeping SoC GPIO. Requires
+	  board-verified timing properties and control-register semantics.
+	  Module name: et2500_cpld_wdt.

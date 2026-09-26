@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Auto Fan Control Service
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/bin/autofan.sh
+Restart=always
+User=root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

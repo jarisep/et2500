@@ -1,0 +1,19 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Example ONLY: substitute labels from the actual board DT and the validated
+ * HW_MARGIN_MS (1400 ms on the tested board, not its initial 10 s grace). Do not apply yet.
+ * Use the existing PCA954x channel 1 node, not the root I2C adapter.
+ */
+&cpld_mux_channel_1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	watchdog@40 {
+		compatible = "asterfusion,et2500-cpld-wdt";
+		reg = <0x40>;
+		feed-gpios = <&soc_gpio 45 0>; /* active high */
+		hw-margin-ms = <HW_MARGIN_MS>;
+		pulse-high-ms = <700>;
+		pulse-low-ms = <300>;
+		timeout-sec = <30>; /* must cover the measured hardware timeout */
+		status = "disabled"; /* example only; deployed system uses the board helper */
+	};
+};

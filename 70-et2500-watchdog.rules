@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: GPL-2.0-only
+SUBSYSTEM=="watchdog", KERNEL=="watchdog[0-9]*", ATTR{identity}=="ET2500 CPLD watchdog", SYMLINK+="watchdog-et2500"

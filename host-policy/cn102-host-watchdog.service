@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Enable ET2500 host watchdog managed by systemd PID1
+Requires=cn102-external-watchdog.service
+After=cn102-external-watchdog.service dbus.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/cn102-enable-host-watchdog
+RemainAfterExit=yes
+TimeoutStartSec=20
+# Stopping this setup unit does not disable host protection.
+
+[Install]
+WantedBy=multi-user.target
