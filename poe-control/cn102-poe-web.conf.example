@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Use one specific local IPv4 address; do not use 0.0.0.0.
+POE_BIND=127.0.0.1
+POE_PORT=8088
+POE_ALLOW=127.0.0.1/32

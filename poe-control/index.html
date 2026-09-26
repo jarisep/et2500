@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ET2500 PoE control</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><a class="brand" href="/" aria-label="ET2500 PoE control"><span class="brand-icon">ϟ</span> ET2500 PoE control</a><div class="device">CN102</div></header>
+<main>
+<section class="intro"><div class="live"><span class="dot" id="liveDot"></span><span id="freshness" role="status">Connecting to controller…</span></div></section>
+<div id="error" class="error" role="alert" hidden></div>
+<section class="metrics" aria-label="Power overview">
+<div class="metric primary"><div class="metric-label">TOTAL OUTPUT <span>ϟ</span></div><div class="reading"><span id="watts">—</span><small>W</small></div><div class="meter"><span id="powerBar"></span></div><p id="powerNote">Waiting for measurements</p></div>
+<div class="metric"><div class="metric-label">SUPPLYING POWER <span>↗</span></div><div class="reading"><span id="powered">—</span><small>/ 12</small></div><p>Ports currently delivering PoE</p></div>
+<div class="metric"><div class="metric-label">NETWORK LINKS <span>⇄</span></div><div class="reading"><span id="links">—</span><small>/ 12</small></div><p>Physical copper links online</p></div>
+</section>
+<section class="ports-section"><div class="section-title"><div><h2>Front panel</h2><p>Top row: odd ports. Bottom row: even ports. Select a copper port to manage PoE.</p></div><div class="legend"><span><i class="dot link-blue"></i> Link</span><span><i class="dot poe-orange"></i> PoE supplying</span></div></div>
+<div class="panel-scroll" tabindex="0" aria-label="ET2500 front panel; scroll horizontally on a small screen">
+<svg class="front-panel" viewBox="460 520 984 200" role="group" aria-label="ET2500 physical ports" xmlns="http://www.w3.org/2000/svg">
+<image href="/front-panel.png" x="0" y="0" width="1904" height="1312" aria-hidden="true"/>
+<g id="rack"></g>
+</svg></div>
+<p class="panel-note">Blue: physical link. Orange: measured PoE output. SFP ports 13–16 show link only.</p>
+<div class="grid" id="ports" aria-live="off"><div class="loading">Reading the PoE controller…</div></div></section>
+<section class="activity"><div><h2>Recent changes</h2><p>Actions from this service session.</p></div><ol id="events"><li class="empty">No changes yet.</li></ol></section>
+<footer><span id="sampleTime">Waiting for measurements</span></footer>
+</main>
+<dialog id="settings"><form id="controlForm"><div class="dialog-top"><div><div class="eyebrow" id="dialogRole"></div><h2 id="dialogTitle">Port settings</h2></div><button type="button" class="close" id="closeDialog" aria-label="Close settings">×</button></div>
+<p id="dialogSummary" class="dialog-summary"></p>
+<div class="control-group"><label>Power delivery</label><div class="power-buttons"><button type="button" class="button accent" id="enablePower">ϟ Enable PoE</button><button type="button" class="button" id="disablePower">Turn off</button></div><small>Turning off PoE disconnects power to the attached device.</small></div>
+<div class="control-row"><div class="control-group"><label for="priority">Power priority</label><select id="priority"><option>Low</option><option>High</option><option>Critical</option></select><button type="button" class="text-button" id="savePriority">Apply priority →</button></div>
+<div class="control-group"><label for="limit">Power limit</label><select id="limit"><option value="15">15 W</option><option value="30">30 W</option><option value="60">60 W · four-pair</option></select><button type="button" class="text-button" id="saveLimit">Apply limit →</button></div></div>
+<p class="hint" id="limitHint">Power-limit changes require a detected, supplying device.</p>
+<div class="dialog-message" id="dialogMessage" role="status"></div>
+<div class="confirm" id="confirmOff" hidden><p id="confirmText"></p><div><button type="button" class="button danger" id="confirmAction">Turn off power</button><button type="button" class="button" id="cancelAction">Cancel</button></div></div>
+<div class="dialog-bottom"><span id="rawStatus"></span><span id="interfaceName"></span></div>
+</form></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+</body></html>

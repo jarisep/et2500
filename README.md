@@ -8,6 +8,7 @@ installation instructions and validation notes.
 
 | Directory | Contents |
 | --- | --- |
+| [poe-control/](poe-control/) | Standalone PoE web control with a physical port view and systemd service |
 | [watchdog-fancontrol/](watchdog-fancontrol/) | External CPLD/GPIO watchdog, fan-temperature publisher and optional systemd host-supervision policy |
 
 For watchdog and fan setup, start with the
@@ -17,7 +18,14 @@ commands run from the component directory, not the repository root.
 
 ## License
 
-GPL-2.0-only. See [LICENSE](LICENSE) and the
-[watchdog/fan provenance notes](watchdog-fancontrol/NOTICE.md).
+Licenses are component-specific:
+
+| Component | License |
+| --- | --- |
+| Watchdog and fan control | GPL-2.0-only: [LICENSE](LICENSE), [provenance](watchdog-fancontrol/NOTICE.md) |
+| PoE application code and documentation | Apache-2.0: [license](poe-control/LICENSE), [provenance and artwork notice](poe-control/NOTICE.md) |
+
+The root GPL license applies to the watchdog/fan component; it does not override
+the separately licensed PoE component.
 
 This is an independent project, not an official Asterfusion or Marvell release.

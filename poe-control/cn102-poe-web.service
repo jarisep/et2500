@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=ET2500 PoE control
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=cn102-poe
+Group=dialout
+WorkingDirectory=/opt/cn102-poe-web
+EnvironmentFile=/etc/cn102-poe-web.conf
+ExecStart=/usr/bin/python3 /opt/cn102-poe-web/server.py --bind ${POE_BIND} --port ${POE_PORT} --allow ${POE_ALLOW}
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=cn102-poe
+RuntimeDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+CapabilityBoundingSet=
+DevicePolicy=closed
+DeviceAllow=/dev/ttyAMA1 rw
+TimeoutStopSec=6
+
+[Install]
+WantedBy=multi-user.target
