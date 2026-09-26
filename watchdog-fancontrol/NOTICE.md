@@ -1,8 +1,8 @@
 # License and provenance
 
-The source, scripts and accompanying project documentation in this repository
+The source, scripts and accompanying project documentation in this component
 are distributed under GNU GPL version 2 only (`GPL-2.0-only`). The complete
-license is in LICENSE. Existing copyright and license notices must be retained.
+license is in [../LICENSE](../LICENSE). Existing copyright and license notices must be retained.
 
 Hardware register assignments and the legacy feed waveform were researched
 using Asterfusion's publicly distributed ET2500 watchdog code, board scripts

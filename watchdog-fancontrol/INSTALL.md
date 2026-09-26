@@ -8,7 +8,7 @@ below assume Bash and the board/kernel described in [README.md](README.md).
 
 ```sh
 git clone https://github.com/jarisep/et2500.git
-cd et2500
+cd et2500/watchdog-fancontrol
 test -e /lib/modules/"$(uname -r)"/build/Makefile
 make > build.log 2>&1 && make test > test.log 2>&1
 ```
@@ -34,7 +34,7 @@ below first. Keep an independent serial console and a working rollback kernel.
 
 ## 3. Install and activate
 
-As root, from the repository directory:
+As root, from the `watchdog-fancontrol/` directory:
 
 ```sh
 bash ./install.sh
