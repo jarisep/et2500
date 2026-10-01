@@ -46,15 +46,17 @@ sudo journalctl -u cn102-poe-web.service -n 30 --no-pager
 
 Open `http://MANAGEMENT_IP:8088/` using your configured address and port. Wait for
 a complete controller scan; confirm port labels, actual link states and power
-readings before using any controls. Starting the service does not enable or
-reset PoE ports. If another instance already runs under this service name,
+readings before using any controls. First startup adopts all current port
+settings. Subsequent starts restore saved settings, including power enablement,
+only on ports that differ. Back up `/var/lib/cn102-poe/ports.json`; do not reuse
+another site's configuration. If an instance already runs under this service name,
 `enable --now` does not reload its files; use `sudo systemctl restart
 cn102-poe-web.service` after installing an update.
 
 For a foreground diagnostic run, stop the service first and create a writable
-runtime directory owned by its service user. `python3 server.py --help` lists the
-bind, allowlist, backend and lock options; `--allow` can be repeated. The shipped
-unit accepts one CIDR. It uses the same defaults for the vendor executable and
+runtime and state directories owned by its service user. `python3 server.py --help` lists the
+bind, allowlist, backend, lock and state-file options; `--allow` can be repeated.
+The shipped unit accepts one CIDR. It uses the same defaults for the vendor executable and
 `/run/cn102-poe/transport.lock`.
 
 ## Stop or remove
@@ -67,3 +69,14 @@ Stopping the application does not turn off PoE. After stopping, its files may be
 removed from `/opt/cn102-poe-web`, together with its unit and configuration, then
 run `sudo systemctl daemon-reload`. Preserve the vendor transport and unrelated
 BSP services. This application has no dependency on the watchdog/fan component.
+
+## Persistent settings
+
+The systemd unit creates `/var/lib/cn102-poe` with service-user ownership.
+Every UI change is saved atomically in `ports.json` before hardware access.
+Normal service restarts do not restart unchanged PoE ports. If a file is invalid,
+the service refuses to apply it or overwrite it; inspect the journal.
+An unsuccessful hardware write leaves saved intent for the next service start.
+The UI distinguishes saved settings from controller settings. Preserve this
+directory across application upgrades; removing it causes fresh adoption of
+controller settings at the next start, not restoration of earlier preferences.

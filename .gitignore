@@ -11,3 +11,15 @@ __pycache__/
 *.log
 *.tar*
 *.deb
+
+# Local deployments, runtime settings and private diagnostic material
+/analysis/
+/backups/
+/deployment/
+poe-control/cn102-poe-web.conf
+poe-control/ports.json
+poe-control/.ports-*
+.env
+.env.*
+*.key
+*.pem

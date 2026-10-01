@@ -7,7 +7,10 @@ const fmt = (n, digits=1) => Number(n).toFixed(digits);
 const speed = p => !p.link ? 'Link down' : p.speed_mbps ? (p.speed_mbps >= 1000 ? `${p.speed_mbps / 1000} Gbps` : `${p.speed_mbps} Mbps`) + (p.duplex === 'full' ? ' · full' : '') : 'Link up';
 function tag(name, cls, text) { const e = document.createElement(name); if(cls)e.className=cls; if(text!==undefined)e.textContent=text; return e; }
 function isSupplying(p) { return p.state === 'supplying' && p.power_w > 0; }
-function statusText(p) { return p.state === 'supplying' && !isSupplying(p) ? 'No measured output' : labels[p.state] || 'Unknown status'; }
+function statusText(p) { return p.state === 'supplying' && !isSupplying(p) ? 'No measured output' : p.status_text || labels[p.state] || 'Unknown status'; }
+const profileName = mode => ({0:'90 W / 30 W',1:'60 W / 30 W',2:'30 W',3:'15 W'})[mode & 15] || 'Special profile';
+const settingText = p => {const c=p.saved;return c ? `PoE ${c.enabled?'enabled':'disabled'} · ${profileName(c.mode)} · Legacy ${(c.mode & 16)?'on':'off'}` : 'Settings unavailable';};
+const deliveryText = p => p.state==='supplying' ? `${p.detection} · ${p.pairs || '?'} pairs supplying` : p.status_text;
 function svgTag(name,attrs={}) { const node=document.createElementNS('http://www.w3.org/2000/svg',name);for(const [key,value] of Object.entries(attrs))node.setAttribute(key,value);return node; }
 // Coordinates are in the supplied reference image's 1904 x 1312 display space.
 const copperPositions=[{x:553,w:68,l:563,r:613},{x:626,w:68,l:636,r:685},{x:699,w:68,l:708,r:756},{x:773,w:68,l:780,r:830},{x:859,w:76,l:870,r:920},{x:940,w:80,l:954,r:1006}];
@@ -33,6 +36,7 @@ function render() {
   $('freshness').textContent = unavailable ? 'Waiting for fresh measurements' : 'Live · automatic refresh';
   $('error').hidden = !unavailable;
   $('error').textContent = state.error ? `${state.error}. Showing the last available measurements; controls are paused.` : 'Reading the controller. Controls become available when fresh measurements arrive.';
+  $('persistence').textContent=state.persistence || '';
   $('sampleTime').textContent = state.updated_at ? 'Last sample · ' + new Date(state.updated_at*1000).toLocaleTimeString() : 'Waiting for first sample';
   if (!ports.length) return;
   const total = ports.reduce((a,p)=>a+p.power_w,0), supplying = ports.filter(isSupplying).length;
@@ -50,7 +54,7 @@ function render() {
       const read=tag('div','card-reading'), watts=tag('div','power-value',fmt(p.power_w));watts.append(tag('small','','W'));
       const electrical=tag('div','electrical');electrical.append(tag('div','',fmt(p.voltage_v)+' V'),tag('div','',fmt(p.current_ma,0)+' mA'));read.append(watts,electrical);
       const bottom=tag('div','card-bottom'), button=tag('button','manage','Manage ↗');button.type='button';button.disabled=unavailable;button.setAttribute('aria-label',`Manage port ${p.port}`);button.onclick=()=>openPort(p.port);
-      bottom.append(tag('span','link-label'+(p.link?' up':''),speed(p)),button);card.append(head,status,read,bottom);cards.append(card);
+      bottom.append(tag('span','link-label'+(p.link?' up':''),speed(p)),button);const config=tag('div','saved-config',settingText(p));if(!p.settings_match)config.append(tag('strong','mismatch','Saved settings differ from controller'));const negotiated=tag('div','negotiated',deliveryText(p));card.append(head,status,config,negotiated,read,bottom);cards.append(card);
       rack.append(panelPort(p,unavailable));
     }
     for(const p of state.uplinks || [])rack.append(panelPort(p,unavailable,true));
@@ -60,18 +64,20 @@ function render() {
   if(events.length) $('events').replaceChildren(...events);
   if($('settings').open) updateDialog(false);
 }
-function openPort(port){selected=port;$('dialogMessage').textContent='';$('confirmOff').hidden=true;updateDialog(true);$('settings').showModal();}
+function openPort(port){if(!state || state.stale || state.error || !state.ports.some(p=>p.port===port))return;selected=port;$('dialogMessage').textContent='';$('confirmOff').hidden=true;updateDialog(true);$('settings').showModal();}
 function updateDialog(reset){
   const p=state.ports.find(p=>p.port===selected);if(!p)return;
   $('dialogTitle').textContent=`Port ${String(p.port).padStart(2,'0')}`;$('dialogRole').textContent=p.role+' CONNECTION';
   $('dialogSummary').textContent=`${statusText(p)} · ${fmt(p.power_w)} W · ${speed(p)}`;
+  $('savedSettings').textContent=settingText(p)+(p.settings_match?' · Saved and applied':' · Saved; differs from controller');
+  $('actualSettings').textContent=`Controller: PoE ${p.enabled===null?'unknown':p.enabled?'enabled':'disabled'} · ${p.profile} · Legacy ${p.legacy===null?'unknown':p.legacy?'on':'off'} · ${p.priority} priority`;
+  $('negotiation').textContent=`${deliveryText(p)} · A/B pair set: ${p.pair_set}`;
   $('rawStatus').textContent='Controller status '+p.status_code;$('interfaceName').textContent=p.interface;
   const unavailable=state.stale||!!state.error;
-  for(const id of ['enablePower','disablePower','priority','savePriority','limit','saveLimit','confirmAction']) $(id).disabled=busy||unavailable;
-  $('limit').querySelector('[value="60"]').disabled=p.pairs!==4;
-  $('limit').disabled=$('saveLimit').disabled=busy||unavailable||!p.pairs;
-  $('limitHint').textContent=p.pairs ? `Detected ${p.pairs}-pair device. Existing legacy-detection mode is preserved.` : 'The controller cannot report a reliable power limit until a device is supplying power.';
-  if(reset){$('priority').value=p.priority==='Unknown'?'Low':p.priority;$('limit').value=String([15,30,60].includes(p.limit_w)?p.limit_w:30);}
+  for(const id of ['enablePower','disablePower','priority','savePriority','limit','saveLimit','legacy','saveLegacy','confirmAction']) $(id).disabled=busy||unavailable;
+  $('limitHint').textContent='Profile limits: 60 W with four-pair delivery, 30 W with two pairs. Changing a profile or detection mode can restart this port. Legacy does not select 24 V.';
+  if(reset || $('settings').dataset.port!==String(selected)){$('settings').dataset.port=String(selected);const c=p.saved || p;$('priority').value=c.priority;$('limit').value=String(({0:90,1:60,2:30,3:15})[c.mode & 15]);$('legacy').value=String(!!(c.mode & 16));}
+
 }
 async function change(action,value){
   if(busy||!state||state.stale||state.error)return;
@@ -96,6 +102,7 @@ $('disablePower').onclick=()=>{$('confirmText').textContent=`Turn off PoE on Por
 $('cancelAction').onclick=()=>{$('confirmOff').hidden=true;};
 $('confirmAction').onclick=()=>change('power','off');
 $('savePriority').onclick=()=>change('priority',$('priority').value);
+$('saveLegacy').onclick=()=>change('legacy',$('legacy').value==='true');
 $('saveLimit').onclick=()=>change('limit',Number($('limit').value));
 async function loop(){if(looping)return;looping=true;try{await refresh();}finally{looping=false;timer=setTimeout(loop,document.hidden?15000:3000);}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){clearTimeout(timer);loop();}});

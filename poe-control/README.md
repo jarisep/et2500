@@ -1,75 +1,121 @@
 # ET2500 PoE control
 
-A standalone web interface for the Asterfusion ET2500 PoE controller. Python's
-standard library serves both the API and the browser interface: no nginx,
-Node.js, pip packages, CDN or external fonts are required.
+Self-contained Python HTTP service and front-panel UI. See INSTALL.md for per-site setup. No separate web server or Python packages.
 
-## Features
+## Port settings and telemetry
 
-- Twelve copper ports with power, voltage, current, priority and power-mode controls.
-- Physical front-panel view: blue means link up; orange means measured PoE delivery.
-  Enabling PoE alone does not light the power indicator. Stale samples suppress LEDs.
-- Four SFP link indicators, read-only; no PoE on SFP ports.
-- Enable/disable, priority, and 15/30/60 W modes. Mode changes require an identified,
-  supplying device; 60 W requires four-pair delivery.
-- Confirmation before disabling power, validated controller replies, and readback
-  of priority/mode changes. Writes are never automatically retried.
-- A single serialized UART worker, bounded transport timeouts, background polling
-  and an unprivileged, sandboxed systemd service.
+The UI shows saved settings separately from live controller settings and actual
+power delivery. Enable/disable, power profile, legacy detection and priority can
+be viewed and changed even with PoE disabled or no attached device. Empty but
+enabled ports remain enabled in the saved configuration.
 
-Start with [INSTALL.md](INSTALL.md). The vendor UART executable
-`API_BT_Share_workspace` must already be installed; it is **not included**.
-This application replaces the vendor PoE command/UI layer, not that transport.
+The selected profile is a ceiling, not measured consumption. The 60 W profile
+permits 60 W with four-pair delivery and 30 W with two-pair delivery. A profile
+does not prove that the board, PSU or PD supports its maximum. The 150 W display
+is the vendor software's reference budget, not a measured PSU identification.
+The UI offers 15/30/60 W profiles and retains an existing 90/30 W profile without
+offering it as a new selection. Profile changes clear extra-power allowance.
 
-## Hardware assumptions
+Actual detection is shown as IEEE, single/dual-signature IEEE where reported,
+or legacy/non-IEEE. Delivered pair count is decoded from the actual status:
+0x83 and 0x85 use two pairs even though the controller port has a four-pair
+matrix. A/B is displayed only when explicitly reported (0x82 means A only);
+other states say Not reported. No IEEE generation or A/B wiring is inferred
+from a mode setting. Measurements show watts, volts, milliamps and Linux link
+speed/duplex. LEDs require fresh telemetry and measured power above zero.
 
-The physical ports 1–12 map to controller channels
-`4,5,6,7,8,9,10,11,0,1,2,3`. Link information is read from Linux interfaces
-`Ethernet0` through `Ethernet15`. If your interface naming or board revision
-is different, check the mapping before controlling power. The generic copper
-labels do not assume which ports are LAN, WAN or management.
+Legacy detection is not force power and does not select a 24 V supply. Verify
+the attached device before enabling it. Profile/detection changes may restart
+that port; other ports are untouched. Global reset, force power, matrix changes,
+controller firmware updates and automatic repeated writes are not implemented.
 
-The supported vendor transport uses `/dev/ttyAMA1` at 19200 baud, 8N1. Do not
-run another PoE utility against that UART concurrently: the application lock
-coordinates only cooperating instances of this service. Existing BSP controller
-initialization may still be required after power-on; this service deliberately
-does not run the vendor global initialization, LED/MMIO or watchdog routines.
+## Persistent settings and startup restoration
 
-Controller polling runs approximately every 8 seconds with viewers and every
-60 seconds without them, plus transaction time. Link data follows those samples.
-The displayed 150 W budget is a vendor software reference, not a measured PSU
-rating or a software-enforced global power cap. Power-mode limits reflect the
-vendor protocol, not a calibrated measurement guarantee.
+The existing `cn102-poe-web.service` owns both restoration and HTTP control.
+There is no second competing UART daemon. Its systemd StateDirectory is
+`/var/lib/cn102-poe` (0700), with `ports.json` (0600). Back up this file along with
+the service and application. Do not copy one site's port settings to another.
 
-## Access model
+- On the first start without a state file, read all 12 ports and adopt their
+  current administrative settings without changing power.
+- Save every requested change atomically using a temporary file, file fsync,
+  rename and directory fsync, before issuing the hardware command.
+- At subsequent service/OS starts, read and validate every port before writing.
+  Apply only differing settings. Unchanged ports receive no write, avoiding
+  unnecessary camera restarts. Each write is acknowledged and read back.
+- Preserve enabled state, operation mode (including legacy), priority, CFG2 and
+  extra-power allowance. Reject force-power enable modes and unsupported
+  operation profiles rather than guessing.
+- A malformed/incomplete saved file prevents startup and is not overwritten.
+  A failed initial controller scan cannot cause partial automatic adoption.
+- If a write or readback fails after saving, the UI returns an explicit error.
+  Saved intent remains, and a settings mismatch is visible after refresh.
+  Startup retries saved intent; the normal poll loop never repeatedly writes.
+- Stopping/restarting the web service does not globally disable PoE. Restart
+  restores differing settings only. The service does not save to controller
+  flash. Settings changed outside this application are not automatically
+  adopted and will be replaced by saved settings on its next start.
 
-There is intentionally **no authentication or TLS**. Anyone on the configured
-allowed network can control PoE. Bind to a specific trusted management IPv4
-address, restrict the allowed CIDR, and do not expose the service to the Internet.
-The default is loopback only. Requests must use that literal IP and port; DNS
-aliases, wildcard binds and reverse proxies are not supported by the Host/Origin
-checks. The per-process browser token is CSRF protection, not an access credential.
+Startup restoration occurs before opening the HTTP listener, under the same
+exclusive process lock. The service starts at boot, runs as `cn102-poe`, and
+systemd retries startup if the controller or bind address is not ready. A total
+power-loss/cold-boot test has not yet been performed with this version.
 
-No hardware writes are performed merely by opening the page or restarting the
-service. There is no application-level configuration persistence or replay;
-retention of controller settings across power loss depends on the hardware/BSP.
-Recent changes are kept in memory and successful actions are logged to journald.
+## Installation and access
 
-## Validation
+Installed files: `/opt/cn102-poe-web/`.
+Unit: `/etc/systemd/system/cn102-poe-web.service`. Configure its environment
+file before enabling it; follow INSTALL.md.
+Transport: `/usr/bin/API_BT_Share_workspace`, UART `/dev/ttyAMA1`, 19200 8N1.
+Runtime lock: `/run/cn102-poe/transport.lock`.
+
+Install the supplied unit with `StateDirectory=cn102-poe`, keep the `cn102-poe`
+user in `dialout`, install application/static files, then:
 
 ```sh
-python3 -m unittest -q
+sudo systemctl daemon-reload
+sudo systemctl enable --now cn102-poe-web
+# For upgrades of an already running instance:
+sudo systemctl restart cn102-poe-web
+sudo journalctl -u cn102-poe-web -n 30 --no-pager
 ```
 
-Tests use captured protocol frames and a mock controller, including malformed
-replies, power-mode selection, HTTP access checks and packaged assets. They do
-not access the UART or change power. The original deployment was exercised on
-an ET2500; publication-specific changes (loopback defaults, configurable systemd
-address and generic port labels) are covered by local checks, not a new hardware
-qualification across all port/device combinations.
+No authentication. Bind to a trusted management IP and restrict the client subnet
+with the supplied environment configuration. Keep the service off WAN.
+Same-origin, Host, JSON and CSRF checks are browser protections, not authentication.
+Every allowed client can read and change settings. See INSTALL.md.
 
-## License
+Do not run the old vendor CLI concurrently: it ignores the application lock.
+Stop this service first for manual UART diagnostics. No CPLD/I2C, watchdog,
+network forwarding or physical LED registers are touched by this application.
 
-Code and documentation in this component: Apache-2.0. See [LICENSE](LICENSE)
-and [NOTICE.md](NOTICE.md) for upstream provenance and the separate front-panel
-illustration notice. This component does not inherit the watchdog's GPL license.
+## Protocol provenance
+
+Asterfusion `PoeCommand.cc`, `StructFormatter.cc` and `Utils.cc`, reviewed at
+commit d57b2eb635264938257a52d32938b3e1d9773fa6:
+https://github.com/asterfusion/Helium_DPU/tree/main/ET2500/Platform/POE_DeviceControl
+
+Additional field/status verification: Microchip PD69200 BT Serial Communication
+Protocol rev 3.23, sections 4.3.6/4.3.7 and Table 4:
+https://ww1.microchip.com/downloads/en/softwarelibrary/poe_pd6920x_p3_42/PD69200_BT-PoE_SerComm_Protocol%20323%20v1_PD-000353781.pdf
+
+Physical copper ports1–8 map to controller channels4–11, ports9–12 to0–3.
+The API validates 15-byte frame length, checksum, echo, command and write ACK.
+Subprocesses have a 2.5-second deadline. No shell wrapper is invoked.
+
+## Verification, 2026-10-01
+
+17 tests cover real captured frames, corrupted frames/ACKs, actual pair decoding,
+disabled-port settings, write/readback validation, first adoption, restore after
+simulated controller reset, no-op restarts, corrupt/partial state, persistence
+failure before hardware access, saved intent after hardware failure, and HTTP
+request/origin checks. Run `python3 -m unittest -q` in this directory.
+
+Hardware validation covered initial adoption, saving settings on a disabled
+port, restoring those settings after changing the controller configuration,
+and a no-op service restart. Other powered ports remained operational.
+Browser checks covered configured values, actual delivered pair count and
+disabled-port controls. A full cold-boot test is still pending.
+
+Source and artwork attribution: see NOTICE.md. UI port labels are physical
+numbers, not inferred network roles.

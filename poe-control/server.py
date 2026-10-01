@@ -20,12 +20,13 @@ import signal
 import subprocess
 import threading
 import time
+import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = Path(__file__).resolve().parent
 PORT_MAP = (4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3)
-TWO_PAIR = {0x80, 0x81, 0x82, 0x90}
-FOUR_PAIR = {0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x91}
+TWO_PAIR = {0x80, 0x81, 0x82, 0x83, 0x85, 0x87, 0x88, 0x90}
+FOUR_PAIR = {0x84, 0x86, 0x89, 0x91}
 NO_POWER = {0x06, 0x07, 0x08, 0x0c, 0x12, 0x1a, 0x1b, 0x1c, 0x1e,
             0x1f, 0x20, 0x22, 0x24, 0x25, 0x26, 0x34, 0x35, 0x36,
             0x43, 0x44, 0x45, 0x46, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0xa8}
@@ -63,21 +64,108 @@ def validate_reply(output, request):
     return received
 
 
-def power_limit(status, mode):
-    if status in FOUR_PAIR:
-        for limit, modes in ((90, {0, 0x10, 0x14, 0x20, 0x25, 0x26, 0x30}),
-                             (60, {1, 0x11, 0x15, 0x21, 0x22, 0x23, 0x24, 0x27}),
-                             (30, {2, 0x12}), (15, {3, 0x13})):
-            if mode in modes:
-                return limit
-    if status in TWO_PAIR:
-        if mode in {3, 0x13}:
-            return 15
-        if mode in {0x20, 0x25, 0x26, 0x30}:
-            return 45
-        if mode in {0, 1, 2, 0x10, 0x11, 0x12, 0x14, 0x15, 0x21, 0x22, 0x23, 0x24, 0x27}:
-            return 30
-    return None
+# Operation profiles describe configured limits, not measured consumption.
+PROFILES = {0: '90 W / 30 W', 1: '60 W / 30 W', 2: '30 W', 3: '15 W'}
+CONFIG_KEYS = {'enabled', 'mode', 'priority', 'cfg2', 'extra_power'}
+STATUS_TEXT = {
+    0x1A: 'Disabled by configuration', 0x1B: 'Detecting device',
+    0x1C: 'Device signature not accepted', 0x1E: 'Underload / device disconnected',
+    0x1F: 'Overload', 0x20: 'Power budget exceeded', 0x22: 'Applying settings',
+    0x24: 'External voltage detected', 0x25: 'Detection / short-circuit fault',
+    0x26: 'Discharged load', 0x34: 'Short circuit', 0x35: 'Over temperature',
+    0x43: 'Classification error', 0xA7: 'Connection check failed', 0xA8: 'No device',
+}
+
+
+def detection(code):
+    if code in {0x90, 0x91}:
+        return 'Forced power'
+    if code in {0x80, 0x82, 0x83, 0x84}:
+        return 'Legacy / non-IEEE'
+    if code in {0x85, 0x86}:
+        return 'IEEE · single signature'
+    if code in {0x87, 0x88, 0x89}:
+        return 'IEEE · dual signature'
+    if code == 0x81:
+        return 'IEEE'
+    return 'Not detected'
+
+
+def profile(mode):
+    base = mode & 0x0f
+    return PROFILES.get(base, 'Unknown') if mode in set(range(4)) | set(range(0x10, 0x14)) else 'Special mode 0x%02X' % mode
+
+
+def port_config(port):
+    result = {key: port[key] for key in CONFIG_KEYS}
+    validate_config(result)
+    return result
+
+
+def validate_config(value):
+    if not isinstance(value, dict) or set(value) != CONFIG_KEYS:
+        raise ControllerError('Invalid saved port configuration')
+    if type(value['enabled']) is not bool or type(value['mode']) is not int or value['mode'] not in set(range(4)) | set(range(0x10, 0x14)):
+        raise ControllerError('Unsupported saved power mode; no force-power restoration allowed')
+    if value['priority'] not in PRIORITIES.values():
+        raise ControllerError('Invalid saved priority')
+    for key in ('cfg2', 'extra_power'):
+        if type(value[key]) is not int or not 0 <= value[key] < 255:
+            raise ControllerError('Invalid saved controller parameter')
+
+
+class Settings:
+    def __init__(self, path):
+        self.path = Path(path)
+        self.ports = None
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text())
+                if set(data) != {'version', 'ports'} or data['version'] != 1 or not isinstance(data['ports'], dict) or set(data['ports']) != {str(p) for p in range(1, 13)}:
+                    raise ValueError('Invalid settings schema')
+                for value in data['ports'].values():
+                    validate_config(value)
+                self.ports = data['ports']
+            except (ValueError, TypeError, ControllerError) as exc:
+                raise ControllerError('Saved settings invalid; refusing to overwrite or apply them') from exc
+
+    def save(self, ports):
+        for value in ports.values():
+            validate_config(value)
+        data = json.dumps({'version': 1, 'ports': ports}, indent=2) + '\n'
+        name = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', dir=self.path.parent, prefix='.ports-', delete=False) as f:
+                name = f.name
+                os.chmod(name, 0o600)
+                f.write(data); f.flush(); os.fsync(f.fileno())
+            os.replace(name, self.path)
+            fd = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            self.ports = ports
+        except OSError as exc:
+            raise ControllerError('Could not durably save settings; reload before retrying') from exc
+        finally:
+            if name and os.path.exists(name):
+                os.unlink(name)
+
+    def initialize(self, controller):
+        # Read and validate every port before changing any hardware.
+        live = [controller.read_port(p) for p in range(1, 13)]
+        configs = {str(p['port']): port_config(p) for p in live}
+        if self.ports is None:
+            self.save(configs)  # First installation adopts settings, including enabled empty ports.
+            return 0
+        count = 0
+        for p in live:
+            wanted = self.ports[str(p['port'])]
+            if configs[str(p['port'])] != wanted:
+                controller.configure(p['port'], wanted, before=p)
+                count += 1
+        return count
 
 
 def link_info(index):
@@ -121,40 +209,53 @@ class Controller:
         return {'port': port, 'interface': 'Ethernet%d' % (port-1),
                 'role': 'Copper',
                 'state': state, 'status_code': '0x%02X' % code, 'mode': mode,
+                'enabled': {0: False, 1: True}.get(status[3] & 0x0f),
+                'cfg2': status[4], 'extra_power': status[6],
+                'legacy': mode in LEGACY_ON if mode in LEGACY_ON | LEGACY_OFF else None,
+                'profile': profile(mode), 'detection': detection(code),
+                'status_text': STATUS_TEXT.get(code, detection(code) if code in TWO_PAIR | FOUR_PAIR else 'Controller status 0x%02X' % code),
+                'pair_set': 'Alternative A' if code == 0x82 else 'Not reported',
                 'pairs': 4 if code in FOUR_PAIR else 2 if code in TWO_PAIR else None,
                 'power_w': round(int.from_bytes(measurement[6:8], 'big') / 10, 1),
                 'voltage_v': round(int.from_bytes(measurement[9:11], 'big') / 10, 1),
                 'current_ma': int.from_bytes(measurement[4:6], 'big'),
-                'limit_w': power_limit(code, mode), 'priority': PRIORITIES.get(status[7], 'Unknown'),
+                'limit_w': {0: 90, 1: 60, 2: 30, 3: 15}.get(mode & 15), 'priority': PRIORITIES.get(status[7], 'Unknown'),
                 'sampled_at': time.time(), **link_info(port-1)}
 
-    def apply(self, port, action, value):
-        request = [0, 0x80, 5, 0xc0, PORT_MAP[port-1], 0x0f, 0xff, 0xff, 0, 0x4e, 0x4e, 0x4e, 0x4e]
-        before = self.read_port(port)
-        if action == 'power':
-            request[5] = 1 if value == 'on' else 0
-        elif action == 'priority':
-            request[9] = {v: k for k, v in PRIORITIES.items()}[value]
-        elif action == 'limit':
-            if before['pairs'] is None:
-                raise ControllerError('Power limit requires an identified, supplying device')
-            if value == 60 and before['pairs'] != 4:
-                raise ControllerError('60 W requires an active four-pair device')
-            mode = before['mode']
-            if mode not in LEGACY_ON | LEGACY_OFF:
-                raise ControllerError('Unknown operation mode; power limit was not changed')
-            # Mode 0 means 30 W on two pairs but 90 W on four pairs.
-            # Use mode 2 for 30 W on both, including after a device swap.
-            request[7] = {15: 3, 30: 2, 60: 1}[value]
-            request[7] += 0x10 if mode in LEGACY_ON else 0
-        self.transact(request)  # Never retry a write automatically.
+    def configure(self, port, wanted, before=None):
+        validate_config(wanted)
+        before = before if before is not None else self.read_port(port)
+        current = port_config(before)
+        if current == wanted:
+            return before
+        request = [0, 0x80, 5, 0xc0, PORT_MAP[port-1], 0x0f, 0xff, 0xff, 0, 0xff, 0x4e, 0x4e, 0x4e]
+        if current['enabled'] != wanted['enabled']:
+            request[5] = int(wanted['enabled'])
+        if current['cfg2'] != wanted['cfg2']:
+            request[6] = wanted['cfg2']
+        if any(current[k] != wanted[k] for k in ('mode', 'extra_power')):
+            request[7], request[8] = wanted['mode'], wanted['extra_power']
+        if current['priority'] != wanted['priority']:
+            request[9] = {v:k for k,v in PRIORITIES.items()}[wanted['priority']]
+        self.transact(request)
         after = self.read_port(port)
-        if action == 'priority' and after['priority'] != value:
-            raise ControllerError('Priority readback differs; refresh before retrying')
-        if action == 'limit' and after['mode'] != request[7]:
-            raise ControllerError('Power-mode readback differs; refresh before retrying')
-        # Power delivery/detection can settle later; an ACK is not evidence of watts delivered.
+        if port_config(after) != wanted:
+            raise ControllerError('Controller settings differ from saved settings; reload before retrying')
         return after
+
+
+def requested_config(before, action, value):
+    wanted = port_config(before)
+    if action == 'power':
+        wanted['enabled'] = value == 'on'
+    elif action == 'priority':
+        wanted['priority'] = value
+    elif action == 'limit':
+        wanted['mode'] = {15:3, 30:2, 60:1}[value] | (wanted['mode'] & 0x10)
+        wanted['extra_power'] = 0
+    elif action == 'legacy':
+        wanted['mode'] = (wanted['mode'] & 0x0f) | (0x10 if value else 0)
+    return wanted
 
 
 def validate_action(body):
@@ -167,14 +268,17 @@ def validate_action(body):
         return port, action, value
     if action == 'priority' and isinstance(value, str) and value in PRIORITIES.values():
         return port, action, value
+    if action == 'legacy' and type(value) is bool:
+        return port, action, value
     if action == 'limit' and type(value) is int and value in (15, 30, 60):
         return port, action, value
     raise ValueError('Unsupported setting')
 
 
 class App:
-    def __init__(self, controller):
+    def __init__(self, controller, settings):
         self.controller = controller
+        self.settings = settings
         self.hardware = threading.Lock()
         self.data_lock = threading.Lock()
         self.ports = []
@@ -189,7 +293,11 @@ class App:
     def snapshot(self):
         self.last_view = time.monotonic()
         with self.data_lock:
-            return {'ports': list(self.ports),
+            ports = []
+            for p in self.ports:
+                saved = self.settings.ports.get(str(p['port']))
+                ports.append(dict(p, saved=saved, settings_match=saved == {k:p.get(k) for k in CONFIG_KEYS}))
+            return {'ports': ports, 'persistence': 'Saved settings are restored when the service starts',
                     'uplinks': [{'port': i+1, 'interface': 'Ethernet%d' % i, **link_info(i)} for i in range(12, 16)],
                     'error': self.error, 'updated_at': self.updated,
                     'stale': self.updated is None or time.time()-self.updated > 25,
@@ -214,7 +322,17 @@ class App:
         if not self.hardware.acquire(timeout=6):
             raise ControllerError('Controller busy; please retry shortly')
         try:
-            after = self.controller.apply(port, action, value)
+            before = self.controller.read_port(port)
+            wanted = requested_config(self.settings.ports[str(port)], action, value)
+            configs = dict(self.settings.ports)
+            configs[str(port)] = wanted
+            # Persist intent BEFORE hardware: power loss cannot lose an accepted change.
+            with self.data_lock:
+                self.settings.save(configs)
+            try:
+                after = self.controller.configure(port, wanted, before=before)
+            except ControllerError as exc:
+                raise ControllerError('Settings saved, but hardware confirmation failed. Reload to inspect; saved settings will be retried at service startup. ' + str(exc)) from exc
             with self.data_lock:
                 self.ports = [after if p['port'] == port else p for p in self.ports]
                 self.events.appendleft({'time': time.time(), 'text': 'Port %d · %s → %s' % (port, action, value)})
@@ -317,7 +435,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             port = self.server.app.change(*args)
-            self.send(200, {'port': port, 'message': 'Controller accepted the command. Power detection may take a few seconds.'})
+            self.send(200, {'port': port, 'message': 'Settings saved and confirmed. Power detection may take a few seconds.'})
         except ControllerError as exc:
             self.send(502, {'error': str(exc)})
         except Exception:
@@ -331,12 +449,17 @@ def main():
     parser.add_argument('--port', type=int, default=8088)
     parser.add_argument('--allow', action='append', default=[])
     parser.add_argument('--backend', default='/usr/bin/API_BT_Share_workspace')
+    parser.add_argument('--state-file', default='/var/lib/cn102-poe/ports.json')
     parser.add_argument('--lock', default='/run/cn102-poe/transport.lock')
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     lock = open(args.lock, 'w')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    app = App(Controller(args.backend))
+    controller = Controller(args.backend)
+    settings = Settings(args.state_file)
+    restored = settings.initialize(controller)
+    logging.info('Persistent settings ready; restored %d changed ports', restored)
+    app = App(controller, settings)
     server = Server((args.bind, args.port), app,
                     [ipaddress.ip_network(n) for n in (args.allow or ['127.0.0.1/32'])])
     worker = threading.Thread(target=app.poll, daemon=True)
